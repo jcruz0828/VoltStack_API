@@ -4,6 +4,10 @@ public enum JobStatus {
     APPLIED,
     INTERVIEW,
     OFFER,
+    ACCEPTED,
     REJECTED,
-    ACCEPTED
+    ON_HOLD,
+    PENDING,
+    FOLLOW_UP,
+    ARCHIVED
 }

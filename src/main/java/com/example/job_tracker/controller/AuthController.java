@@ -40,8 +40,10 @@ public class AuthController {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new AuthResponse(null, null, "An error occurred while processing your request"));
         }
     }
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthController.class);
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest loginRequest){
+        log.info("IN CONTROLLER AUTH");
         if (loginRequest.getEmail() == null || loginRequest.getPassword() == null) {
             return ResponseEntity.badRequest().body(new AuthResponse(null, null, "All fields are required"));
         }

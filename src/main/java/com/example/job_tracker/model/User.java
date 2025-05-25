@@ -7,6 +7,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.List;
 
 @Entity
@@ -24,8 +25,16 @@ public class User {
     private String email;
     private String password;
     private UserStatus status;
+    private String googleAccessToken;
+    private String googleRefreshToken;
+    private Instant googleTokenExpiry;
+
 
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Application> jobs;
+
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<EmailMetadata> emails;
+
 
 }

@@ -7,6 +7,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.util.List;
+
 @Entity
 @Getter
 @Setter
@@ -31,4 +33,7 @@ public class Application {
     // This is the per-application unique description
     private String companyDescription;
     private String description; // This is the application's own description
+    @OneToMany(mappedBy = "application", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<EmailMetadata> relatedEmails;
+
 }
