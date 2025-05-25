@@ -4,6 +4,7 @@ import com.example.job_tracker.service.groq.iGroqLlmService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -13,6 +14,7 @@ import java.util.*;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class GroqLLMService implements iGroqLlmService {
 
     @Value("${groq.api.key}")
@@ -24,25 +26,31 @@ public class GroqLLMService implements iGroqLlmService {
     @Override
     public String detectStatus(String from, String subject, String body) {
         String prompt = """
-                You are an email classifier for engineering job applications. Classify this email into exactly one of these categories:
+                You are an email classifier for engineering job applications. Classify this email into **exactly one** of these categories ONLY:
                 OFFER, TECHNICAL_OFFER, INTERNSHIP_OFFER, TECHNICAL_INTERVIEW, CODING_CHALLENGE,
                 SYSTEM_DESIGN, BEHAVIORAL, ONSITE, REJECTED, TECHNICAL_REJECT, NO_POSITION,
                 PENDING, ON_HOLD, FOLLOW_UP, UNRELATED.
+
+                - If the email is not related to jobs, recruiting, interviews, or employment, choose UNRELATED.
+                - If you are unsure or the email is ambiguous, choose UNRELATED.
+                - If the input is empty, choose UNRELATED.
+                - Do not make up data or invent categories.
+                - Output **exactly** one line: CATEGORY:SCORE (e.g., INTERNSHIP_OFFER:0.97). Do not add extra text, explanation, or commentary.
+                - CATEGORY must be one of the above only. SCORE must be a decimal between 0 and 1.
 
                 Email:
                 From: %s
                 Subject: %s
                 Body: %s
-
-                Return only the category name and confidence score (0-1) in this format: CATEGORY:SCORE
                 """.formatted(from, subject, body);
 
         try {
             JsonNode response = callGroqAPI(prompt);
-            String output = response.get("choices").get(0).get("message").get("content").asText().trim();
+            String output = safeExtractContent(response);
+            if (output == null) return "PENDING";
             return output.split(":")[0];
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("detectStatus failed", e);
             return "PENDING";
         }
     }
@@ -50,8 +58,10 @@ public class GroqLLMService implements iGroqLlmService {
     @Override
     public List<String> extractCompanies(String subject, String body) {
         String prompt = """
-                Extract all company names mentioned in the following email.
-                Return only a JSON array of company names, e.g. [\"Google\", \"Tesla\"].
+                Extract all real company names mentioned in the following email. Return only a JSON array of company names, for example: ["Google", "Tesla"].
+                - If no company names are found, return [].
+                - Do not make up or invent companies.
+                - Return ONLY the JSON array, nothing else, no explanation.
 
                 Subject: %s
                 Body: %s
@@ -59,13 +69,14 @@ public class GroqLLMService implements iGroqLlmService {
 
         try {
             JsonNode response = callGroqAPI(prompt);
-            String raw = response.get("choices").get(0).get("message").get("content").asText().trim();
+            String raw = safeExtractContent(response);
+            if (raw == null) return Collections.emptyList();
             JsonNode companyList = objectMapper.readTree(raw);
             List<String> companies = new ArrayList<>();
             companyList.forEach(node -> companies.add(node.asText()));
             return companies;
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("extractCompanies failed", e);
             return Collections.emptyList();
         }
     }
@@ -73,22 +84,50 @@ public class GroqLLMService implements iGroqLlmService {
     @Override
     public boolean isJobRelated(String subject, String body) {
         String prompt = """
-                Determine if the following email is related to a job application, recruiting, interview, hiring, or employment.
+                Determine if the following email is about job applications, recruiting, interviews, hiring, or employment.
+                - If it is not about these topics, return NO.
+                - If you are unsure or the input is ambiguous, return NO.
+                - Do not make up context. If the input is empty, return NO.
+                - Return ONLY YES or NO. No extra words, no explanation, no punctuation.
 
-                Email:
                 Subject: %s
                 Body: %s
-
-                Return only YES or NO.
                 """.formatted(subject, body);
 
         try {
             JsonNode response = callGroqAPI(prompt);
-            String result = response.get("choices").get(0).get("message").get("content").asText().trim().toUpperCase();
+            String result = safeExtractContent(response);
+            log.info("LLM raw output for isJobRelated: subject='{}' body='{}' --> {}", subject, body, result); // Debug log
+            if (result == null) return false;
+            result = result.trim().toUpperCase();
             return result.equals("YES");
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("isJobRelated failed", e);
             return false;
+        }
+    }
+
+    // Debug helper to get raw output for prompt analysis
+    public String isJobRelatedRaw(String subject, String body) {
+        String prompt = """
+                Determine if the following email is about job applications, recruiting, interviews, hiring, or employment.
+                - If it is not about these topics, return NO.
+                - If you are unsure or the input is ambiguous, return NO.
+                - Do not make up context. If the input is empty, return NO.
+                - Return ONLY YES or NO. No extra words, no explanation, no punctuation.
+
+                Subject: %s
+                Body: %s
+                """.formatted(subject, body);
+
+        try {
+            JsonNode response = callGroqAPI(prompt);
+            String result = safeExtractContent(response);
+            log.info("isJobRelatedRaw: subject='{}' body='{}' --> '{}'", subject, body, result); // Extra debug
+            return result;
+        } catch (Exception e) {
+            log.error("isJobRelatedRaw failed", e);
+            return null;
         }
     }
 
@@ -114,7 +153,36 @@ public class GroqLLMService implements iGroqLlmService {
                 .build();
 
         Response response = client.newCall(request).execute();
-        return objectMapper.readTree(Objects.requireNonNull(response.body()).string());
+        String respBody = Objects.requireNonNull(response.body()).string();
+
+        JsonNode root = objectMapper.readTree(respBody);
+
+        // Extra: Log Groq errors in API response
+        if (root.has("error")) {
+            log.error("Groq API error: {}", root.get("error").toPrettyString());
+        }
+
+        return root;
+    }
+
+    /**
+     * Safely extracts the content string from a Groq/OpenAI-like API response,
+     * or returns null if not present.
+     */
+    private String safeExtractContent(JsonNode root) {
+        if (root == null) return null;
+        JsonNode choices = root.get("choices");
+        if (choices != null && choices.isArray() && choices.size() > 0) {
+            JsonNode messageNode = choices.get(0).get("message");
+            if (messageNode != null && messageNode.has("content")) {
+                return messageNode.get("content").asText();
+            }
+        }
+        if (root.has("error")) {
+            log.error("Groq error in response: {}", root.get("error").toPrettyString());
+        } else {
+            log.error("Unexpected Groq response: {}", root.toPrettyString());
+        }
+        return null;
     }
 }
-

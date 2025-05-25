@@ -38,22 +38,22 @@ public class AppConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                HttpMethod.OPTIONS, "/**",
-                                "/api/v1/auth/**",
-                                "/auth/google/**",
-                                "/success.html"
-                        ).permitAll()
-                        .anyRequest().authenticated()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // For CORS preflight
+                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        .requestMatchers("/auth/google/**").permitAll()
+                        .requestMatchers("/success.html").permitAll()
+                        .requestMatchers("/api/v1/test-email/**").permitAll()
+                        .anyRequest().authenticated()  // <--- THIS GOES INSIDE authorizeHttpRequests ONLY ONCE
                 )
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
                 .authenticationProvider(authenticationProvider());
-               // .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+        // .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
+
 
 
     @Bean
